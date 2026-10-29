@@ -429,14 +429,20 @@ in
             skin_settings="${cfg.home}/.kodi/userdata/addon_data/skin.estuary/settings.xml"
             ${lib.optionalString cfg.webServer.enable ''
               password_file="${cfg.webServer.passwordFile}"
-              if [ ! -s "$password_file" ]; then
-                echo "kodi-settings: missing or empty password file: $password_file" >&2
-                exit 1
+              # Le secret peut manquer au premier boot : carte fraîche, clé
+              # d'hôte régénérée donc agenix indéchiffrable, ou fichier pas
+              # encore provisionné. Un kiosque sans serveur web reste un
+              # kiosque ; un kiosque qui ne démarre pas est une télévision
+              # noire — et `kodi-gbm` est en `Requires=` sur cette unité.
+              # On dégrade, on le dit, Kodi démarre.
+              if [ -s "$password_file" ]; then
+                password="$(${pkgs.coreutils}/bin/cat "$password_file")"
               fi
-              password="$(${pkgs.coreutils}/bin/cat "$password_file")"
-              if [ -z "$password" ]; then
-                echo "kodi-settings: empty password in $password_file" >&2
-                exit 1
+              if [ -n "''${password:-}" ]; then
+                webserver=1
+              else
+                webserver=0
+                echo "kodi-settings: $password_file absent ou vide — serveur web désactivé" >&2
               fi
             ''}
 
@@ -465,19 +471,6 @@ in
             # UI sounds: guisoundmode=0 disables them; soundskin must be empty,
             # not "OFF" (Kodi logs "Unknown sounds addon 'OFF'").
             args=(
-              ${lib.optionalString cfg.webServer.enable ''
-                -u "//setting[@id='services.webserver']" -v true
-                -u "//setting[@id='services.esallinterfaces']" -v true
-                -u "//setting[@id='services.webserverauthentication']" -v true
-                -u "//setting[@id='services.webserverusername']" -v "${cfg.webServer.username}"
-                -u "//setting[@id='services.webserverpassword']" -v "$password"
-                -u "//setting[@id='services.webserverport']" -v "${toString cfg.webServer.port}"
-                -u "//setting[@id='services.webserverssl']" -v false
-                -u "//setting[@id='services.zeroconf']" -v true
-                -d "//setting[@id='services.webserver']/@default"
-                -d "//setting[@id='services.esallinterfaces']/@default"
-                -d "//setting[@id='services.webserverpassword']/@default"
-              ''}
               ${lib.optionalString cfg.uiSounds ''
                 -u "//setting[@id='audiooutput.guisoundmode']" -v 0
                 -u "//setting[@id='lookandfeel.soundskin']" -v ""
@@ -485,6 +478,28 @@ in
                 -d "//setting[@id='lookandfeel.soundskin']/@default"
               ''}
             )
+            ${lib.optionalString cfg.webServer.enable ''
+              if [ "''${webserver:-0}" = 1 ]; then
+                args+=(
+                  -u "//setting[@id='services.webserver']" -v true
+                  -u "//setting[@id='services.esallinterfaces']" -v true
+                  -u "//setting[@id='services.webserverauthentication']" -v true
+                  -u "//setting[@id='services.webserverusername']" -v "${cfg.webServer.username}"
+                  -u "//setting[@id='services.webserverpassword']" -v "$password"
+                  -u "//setting[@id='services.webserverport']" -v "${toString cfg.webServer.port}"
+                  -u "//setting[@id='services.webserverssl']" -v false
+                  -u "//setting[@id='services.zeroconf']" -v true
+                  -d "//setting[@id='services.webserver']/@default"
+                  -d "//setting[@id='services.esallinterfaces']/@default"
+                  -d "//setting[@id='services.webserverpassword']/@default"
+                )
+              else
+                args+=(
+                  -u "//setting[@id='services.webserver']" -v false
+                  -d "//setting[@id='services.webserver']/@default"
+                )
+              fi
+            ''}
             if [ "''${#args[@]}" -gt 0 ]; then
               ${pkgs.xmlstarlet}/bin/xmlstarlet ed -L "''${args[@]}" "$settings"
             fi
