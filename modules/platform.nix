@@ -103,19 +103,6 @@
       };
     };
 
-    kodiDrmPrime = lib.mkOption {
-      type = lib.types.bool;
-      default = true;
-      description = ''
-        Whether this board's decode path is the stateless V4L2 Request API, as
-        consumed by Kodi's DRMPRIME decoder.
-
-        A board that only exposes the stateful M2M decoder must publish `false`:
-        Kodi still prefers DRMPRIME whenever FFmpeg advertises a DRM_PRIME
-        hwaccel, opens the decoder, then fails every packet.
-      '';
-    };
-
     kodiPackage = lib.mkOption {
       type = lib.types.nullOr lib.types.package;
       default = null;

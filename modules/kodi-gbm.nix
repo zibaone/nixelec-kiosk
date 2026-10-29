@@ -170,25 +170,6 @@ in
       };
     };
 
-    video = {
-      drmPrime = lib.mkOption {
-        type = lib.types.bool;
-        default = true;
-        description = ''
-          Whether Kodi may use its DRMPRIME decoder.
-
-          Kodi's DRMPRIME path speaks the *stateless* V4L2 Request API. On a
-          board whose kernel only provides the *stateful* M2M decoder
-          (`meson-vdec`, `h264_v4l2m2m`), Kodi opens the decoder and then fails
-          every packet — a black screen with sound. Turning this off makes Kodi
-          decode in software instead of failing.
-
-          The board publishes the fact (`nixelec.platform.kodiDrmPrime`); the
-          kiosk only consumes it.
-        '';
-      };
-    };
-
     webServer = {
       enable = lib.mkEnableOption "Kodi web server (HTTP Basic, LAN)";
 
@@ -448,7 +429,7 @@ in
     # Kodi rewrites guisettings.xml on shutdown, so the managed settings
     # must be applied before every start, not shipped as a static file.
     systemd.services.kodi-settings =
-      lib.mkIf (cfg.webServer.enable || cfg.uiSounds || cfg.homeMenu.hidden != [ ] || !cfg.video.drmPrime)
+      lib.mkIf (cfg.webServer.enable || cfg.uiSounds || cfg.homeMenu.hidden != [ ])
         {
           description = "Apply Kodi settings before Kodi starts";
           after = [ "local-fs.target" ];
@@ -519,21 +500,6 @@ in
                 -d "//setting[@id='lookandfeel.soundskin']/@default"
               ''}
             )
-            ${lib.optionalString (!cfg.video.drmPrime) ''
-              # Kodi n'écrit `videoplayer.usedrmprime` qu'après l'avoir modifié :
-              # la clé peut être absente, et xmlstarlet ne crée pas de nœud.
-              if ! ${pkgs.gnugrep}/bin/grep -q "videoplayer.usedrmprime" "$settings"; then
-                ${pkgs.gnused}/bin/sed -i \
-                  's|</settings>|    <setting id="videoplayer.usedrmprime" default="true">false</setting>\n</settings>|' \
-                  "$settings"
-              fi
-              # Stateless absent : le décodeur DRMPRIME échouerait à chaque
-              # paquet (écran noir, son OK). Kodi décode en logiciel à la place.
-              args+=(
-                -u "//setting[@id='videoplayer.usedrmprime']" -v false
-                -d "//setting[@id='videoplayer.usedrmprime']/@default"
-              )
-            ''}
             ${lib.optionalString (cfg.audio.hdmiPcm != null) ''
               # Sink brut exposé par le kiosque : on le nomme explicitement, sinon
               # Kodi choisit « Default » et suit le sink par défaut de PipeWire.
