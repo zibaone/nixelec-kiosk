@@ -668,8 +668,14 @@ in
     # alors rien et retombe sur l'analogique — la TV reste muette alors que le
     # PCM HDMI fonctionne (vérifié avec `ffmpeg -f alsa hw:1,0`, stéréo 48 kHz).
     # On expose le PCM brut comme sink et on le passe par défaut.
-    environment.etc."pipewire/pipewire.conf.d/50-hdmi-pcm.conf" = lib.mkIf (cfg.audio.hdmiPcm != null) {
-      text = ''
+    # Passer par `environment.etc` est refusé par NixOS (« Using
+    # environment.etc."pipewire<...>" directly is no longer supported ») : le
+    # module expose `configPackages`, dont les `share/pipewire/pipewire.conf.d`
+    # sont agrégés. Un paquet suffit, sans dépendre du format de `extraConfig`.
+    services.pipewire.configPackages = lib.mkIf (cfg.audio.hdmiPcm != null) [
+      (pkgs.runCommand "pipewire-hdmi-pcm.conf" { } ''
+        mkdir -p $out/share/pipewire/pipewire.conf.d
+        cat > $out/share/pipewire/pipewire.conf.d/50-hdmi-pcm.conf <<'CONF'
         context.objects = [
           { factory = adapter
             args = {
@@ -683,8 +689,9 @@ in
             }
           }
         ]
-      '';
-    };
+        CONF
+      '')
+    ];
 
     services.pipewire.wireplumber.extraConfig."52-hdmi-default" = lib.mkIf (cfg.audio.hdmiPcm != null) {
       "wireplumber.settings"."default.configured.audio.sink" = {
