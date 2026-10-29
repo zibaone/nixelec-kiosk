@@ -447,6 +447,11 @@ in
             ''}
 
             ${pkgs.coreutils}/bin/install -d -o ${cfg.user} -g users -m 0700 "${cfg.home}/.kodi/userdata"
+            # `install -d` n'applique -o/-g qu'au dernier répertoire : sans la
+            # ligne sur `addon_data` seul, il est créé root:root et Kodi (uid
+            # kodi) ne peut plus écrire dans addon_data/<addon> — les greffons
+            # échouent en « Permission denied » au premier accès.
+            ${pkgs.coreutils}/bin/install -d -o ${cfg.user} -g users -m 0755 "${cfg.home}/.kodi/userdata/addon_data"
             ${pkgs.coreutils}/bin/install -d -o ${cfg.user} -g users -m 0755 "${cfg.home}/.kodi/userdata/addon_data/skin.estuary"
             if [ ! -e "$settings" ]; then
               ${pkgs.coreutils}/bin/printf '%s\n' \
