@@ -4,7 +4,7 @@
   # Seul input : nixpkgs. Cette couche ne connaît ni SoC, ni carte, ni flake
   # média. Le paquet Kodi est une option obligatoire, fournie par la carte ou
   # par le profil de flotte — voir modules/kodi-gbm.nix et docs/contrat.md.
-  inputs.nixpkgs.url = "github:NixOS/nixpkgs/nixos-26.05";
+  inputs.nixpkgs.url = "github:NixOS/nixpkgs/cd4ea8d57de16f4810bc5f14207bac45fbf19f67";
 
   outputs =
     { self, nixpkgs }:
