@@ -63,6 +63,21 @@
       '';
     };
 
+    hdmiPcm = lib.mkOption {
+      type = lib.types.nullOr lib.types.str;
+      default = null;
+      example = "hw:1,0";
+      description = ''
+        ALSA PCM path of the HDMI output, when that card exposes no mixer
+        control and ACP therefore builds no profile for it.
+
+        On such a card PipeWire publishes no HDMI sink at all: Kodi enumerates
+        nothing, falls back to the analog output, and the television stays
+        silent while everything else looks healthy. `null` means the card is
+        usable through ACP as-is and no raw PCM sink is needed.
+      '';
+    };
+
     watchdog = {
       enable = lib.mkOption {
         type = lib.types.bool;

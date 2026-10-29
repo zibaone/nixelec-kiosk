@@ -153,6 +153,23 @@ in
       '';
     };
 
+    audio = {
+      hdmiPcm = lib.mkOption {
+        type = lib.types.nullOr lib.types.str;
+        default = null;
+        example = "hw:1,0";
+        description = ''
+          ALSA PCM of the HDMI output, when that card exposes no mixer and ACP
+          builds no profile for it.
+
+          Without this, PipeWire publishes no HDMI sink: Kodi enumerates none,
+          silently falls back to the analog output, and the television stays
+          mute while the whole chain looks healthy. Setting it exposes the raw
+          PCM as a PipeWire sink named `alsa_output.hdmi` and points Kodi at it.
+        '';
+      };
+    };
+
     webServer = {
       enable = lib.mkEnableOption "Kodi web server (HTTP Basic, LAN)";
 
@@ -483,6 +500,14 @@ in
                 -d "//setting[@id='lookandfeel.soundskin']/@default"
               ''}
             )
+            ${lib.optionalString (cfg.audio.hdmiPcm != null) ''
+              # Sink brut exposé par le kiosque : on le nomme explicitement, sinon
+              # Kodi choisit « Default » et suit le sink par défaut de PipeWire.
+              args+=(
+                -u "//setting[@id='audiooutput.audiodevice']" -v "PIPEWIRE:alsa_output.hdmi"
+                -d "//setting[@id='audiooutput.audiodevice']/@default"
+              )
+            ''}
             ${lib.optionalString cfg.webServer.enable ''
               if [ "''${webserver:-0}" = 1 ]; then
                 args+=(
@@ -636,6 +661,35 @@ in
     # the chain.
     services.pipewire.wireplumber.extraConfig."51-default-sink-volume" = {
       "wireplumber.settings"."device.routes.default-sink-volume" = 1.0;
+    };
+
+    # Carte HDMI sans aucun contrôle de mixer : ACP ne peut pas construire de
+    # profil, donc PipeWire ne publie **aucun** sink pour elle. Kodi n'énumère
+    # alors rien et retombe sur l'analogique — la TV reste muette alors que le
+    # PCM HDMI fonctionne (vérifié avec `ffmpeg -f alsa hw:1,0`, stéréo 48 kHz).
+    # On expose le PCM brut comme sink et on le passe par défaut.
+    environment.etc."pipewire/pipewire.conf.d/50-hdmi-pcm.conf" = lib.mkIf (cfg.audio.hdmiPcm != null) {
+      text = ''
+        context.objects = [
+          { factory = adapter
+            args = {
+              factory.name     = api.alsa.pcm.sink
+              node.name        = "alsa_output.hdmi"
+              node.description = "HDMI"
+              media.class      = "Audio/Sink"
+              api.alsa.path    = "${cfg.audio.hdmiPcm}"
+              audio.channels   = 2
+              audio.rate       = 48000
+            }
+          }
+        ]
+      '';
+    };
+
+    services.pipewire.wireplumber.extraConfig."52-hdmi-default" = lib.mkIf (cfg.audio.hdmiPcm != null) {
+      "wireplumber.settings"."default.configured.audio.sink" = {
+        name = "alsa_output.hdmi";
+      };
     };
 
     services.xserver.enable = lib.mkDefault false;
@@ -894,7 +948,10 @@ in
         dir="${cfg.home}/.kodi/userdata/peripheral_data"
         file="$dir/cec_CEC_Adapter.xml"
         ${pkgs.coreutils}/bin/install -d -o ${cfg.user} -g users -m 0755 "$dir"
-        if [ ! -f "$file" ]; then
+        # `-s` et non `-f` : Kodi crée parfois le fichier vide quand il n'arrive
+        # pas à lire les réglages de l'adaptateur. Avec `-f`, le gabarit n'était
+        # jamais réinstallé et le CEC restait muet alors que l'unité réussissait.
+        if [ ! -s "$file" ]; then
           ${pkgs.coreutils}/bin/install -o ${cfg.user} -g users -m 0644 \
             ${./kodi-cec-adapter.xml} "$file"
         fi
