@@ -986,11 +986,19 @@ in
     systemd.network.networks."10-lan" = {
       matchConfig.Name = "en*";
       networkConfig.DHCP = "ipv4";
+      # Le filaire passe devant le WiFi quand les deux sont présents : sans
+      # métrique distincte, les deux liens obtiennent 1024 et la carte se
+      # retrouve avec deux routes par défaut équivalentes sur le même
+      # sous-réseau. Mesuré sur la Zero 3 : ARP pour l'adresse WiFi en
+      # INCOMPLETE alors que l'adresse filaire répondait, donc SSH qui échoue
+      # par intermittence selon l'interface qui répond.
+      dhcpV4Config.RouteMetric = 100;
     };
     systemd.network.networks."10-wlan" = {
       matchConfig.Name = "wl*";
       networkConfig.DHCP = "ipv4";
       linkConfig.RequiredForOnline = "routable";
+      dhcpV4Config.RouteMetric = 600;
     };
 
     services.avahi = {
