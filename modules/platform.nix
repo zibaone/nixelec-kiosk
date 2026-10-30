@@ -63,6 +63,22 @@
       '';
     };
 
+    consoleTty = lib.mkOption {
+      type = lib.types.nullOr lib.types.str;
+      default = null;
+      example = "ttyAML0";
+      description = ''
+        Kernel name of the serial console device (`ttyS0`, `ttyAML0`,
+        `ttyS1`…), as accepted by `console=`. It is a board fact: the name
+        depends on the SoC's UART driver, and getting it wrong gives a getty
+        that fails at every boot (`/dev/ttyS0: not a tty`) — a failed unit that
+        also makes `nixos-rebuild switch` return 4.
+
+        `null` means the platform does not publish one; the fleet then falls
+        back to `ttyS0`.
+      '';
+    };
+
     hdmiPcm = lib.mkOption {
       type = lib.types.nullOr lib.types.str;
       default = null;
