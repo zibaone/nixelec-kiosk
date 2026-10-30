@@ -483,145 +483,161 @@ in
         RemainAfterExit = true;
       };
       script = ''
-        set -euo pipefail
+                set -euo pipefail
 
-        settings="${cfg.home}/.kodi/userdata/guisettings.xml"
-        skin_settings="${cfg.home}/.kodi/userdata/addon_data/skin.estuary/settings.xml"
-        ${lib.optionalString cfg.webServer.enable ''
-          password_file="${cfg.webServer.passwordFile}"
-          # Le secret peut manquer au premier boot : carte fraîche, clé
-          # d'hôte régénérée donc agenix indéchiffrable, ou fichier pas
-          # encore provisionné. Un kiosque sans serveur web reste un
-          # kiosque ; un kiosque qui ne démarre pas est une télévision
-          # noire — et `kodi-gbm` est en `Requires=` sur cette unité.
-          # On dégrade, on le dit, Kodi démarre.
-          if [ -s "$password_file" ]; then
-            password="$(${pkgs.coreutils}/bin/cat "$password_file")"
-          fi
-          if [ -n "''${password:-}" ]; then
-            webserver=1
-          else
-            webserver=0
-            echo "kodi-settings: $password_file absent ou vide — serveur web désactivé" >&2
-          fi
-        ''}
+                settings="${cfg.home}/.kodi/userdata/guisettings.xml"
+                skin_settings="${cfg.home}/.kodi/userdata/addon_data/skin.estuary/settings.xml"
+                ${lib.optionalString cfg.webServer.enable ''
+                  password_file="${cfg.webServer.passwordFile}"
+                  # Le secret peut manquer au premier boot : carte fraîche, clé
+                  # d'hôte régénérée donc agenix indéchiffrable, ou fichier pas
+                  # encore provisionné. Un kiosque sans serveur web reste un
+                  # kiosque ; un kiosque qui ne démarre pas est une télévision
+                  # noire — et `kodi-gbm` est en `Requires=` sur cette unité.
+                  # On dégrade, on le dit, Kodi démarre.
+                  if [ -s "$password_file" ]; then
+                    password="$(${pkgs.coreutils}/bin/cat "$password_file")"
+                  fi
+                  if [ -n "''${password:-}" ]; then
+                    webserver=1
+                  else
+                    webserver=0
+                    echo "kodi-settings: $password_file absent ou vide — serveur web désactivé" >&2
+                  fi
+                ''}
 
-        ${pkgs.coreutils}/bin/install -d -o ${cfg.user} -g users -m 0700 "${cfg.home}/.kodi/userdata"
-        # `install -d` n'applique -o/-g qu'au dernier répertoire : sans la
-        # ligne sur `addon_data` seul, il est créé root:root et Kodi (uid
-        # kodi) ne peut plus écrire dans addon_data/<addon> — les greffons
-        # échouent en « Permission denied » au premier accès.
-        ${pkgs.coreutils}/bin/install -d -o ${cfg.user} -g users -m 0755 "${cfg.home}/.kodi/userdata/addon_data"
-        ${pkgs.coreutils}/bin/install -d -o ${cfg.user} -g users -m 0755 "${cfg.home}/.kodi/userdata/addon_data/skin.estuary"
-        if [ ! -e "$settings" ]; then
-          ${pkgs.coreutils}/bin/printf '%s\n' \
-            '<?xml version="1.0" encoding="UTF-8" standalone="yes" ?>' \
-            '<settings version="2">' \
-            '    <setting id="services.webserver" default="true">false</setting>' \
-            '    <setting id="services.esallinterfaces" default="true">false</setting>' \
-            '    <setting id="services.webserverauthentication" default="true">true</setting>' \
-            '    <setting id="services.webserverusername" default="true">kodi</setting>' \
-            '    <setting id="services.webserverpassword" default="true" />' \
-            '    <setting id="filecache.memorysize" default="true">${toString cfg.video.cacheMiB}</setting>' \
-            '    <setting id="services.webserverport" default="true">8080</setting>' \
-            '    <setting id="services.webserverssl" default="true">false</setting>' \
-            '    <setting id="services.zeroconf" default="true">true</setting>' \
-            '    <setting id="audiooutput.guisoundmode" default="true">1</setting>' \
-            '    <setting id="lookandfeel.soundskin" default="true">resource.uisounds.kodi</setting>' \
-            '</settings>' > "$settings"
-        fi
+                ${pkgs.coreutils}/bin/install -d -o ${cfg.user} -g users -m 0700 "${cfg.home}/.kodi/userdata"
+                # `guisettings.xml` peut exister **vide** : un reboot ou une coupure
+                # pendant que Kodi l'écrit le tronque. xmlstarlet refuse alors le
+                # fichier (« Document is empty »), l'unité tombe, et comme `kodi-gbm`
+                # est en `Requires=` dessus, l'écran reste noir — le pire des modes de
+                # panne pour un kiosque. On repose un squelette minimal : Kodi le
+                # complète à son démarrage, les réglages appliqués ici tiennent.
+                if [ ! -s "$settings" ]; then
+                  echo "kodi-settings: $settings absent ou vide — squelette minimal reposé" >&2
+                  ${pkgs.coreutils}/bin/install -o ${cfg.user} -g users -m 0600 /dev/null "$settings"
+                  ${pkgs.coreutils}/bin/cat >"$settings" <<'KODI_SETTINGS_SKELETON'
+        <?xml version="1.0" encoding="UTF-8" standalone="yes" ?>
+        <settings version="2"></settings>
+        KODI_SETTINGS_SKELETON
+                  ${pkgs.coreutils}/bin/chown ${cfg.user}:users "$settings"
+                fi
 
-        # Kodi marks default values with default="true" and ignores the text
-        # in that case; non-default values must drop the attribute.
-        #
-        # UI sounds: guisoundmode=0 disables them; soundskin must be empty,
-        # not "OFF" (Kodi logs "Unknown sounds addon 'OFF'").
-        args=(
-          # Cache vidéo : toujours posé, c'est un réglage d'appliance.
-          -u "//setting[@id='filecache.memorysize']" -v "${toString cfg.video.cacheMiB}"
-          -d "//setting[@id='filecache.memorysize']/@default"
-          ${lib.optionalString cfg.uiSounds ''
-            -u "//setting[@id='audiooutput.guisoundmode']" -v 0
-            -u "//setting[@id='lookandfeel.soundskin']" -v ""
-            -d "//setting[@id='audiooutput.guisoundmode']/@default"
-            -d "//setting[@id='lookandfeel.soundskin']/@default"
-          ''}
-        )
-        ${lib.optionalString (cfg.audio.hdmiPcm != null) ''
-          # Sink brut exposé par le kiosque : on le nomme explicitement, sinon
-          # Kodi choisit « Default » et suit le sink par défaut de PipeWire.
-          args+=(
-            -u "//setting[@id='audiooutput.audiodevice']" -v "PIPEWIRE:alsa_output.hdmi"
-            -d "//setting[@id='audiooutput.audiodevice']/@default"
-          )
-        ''}
-        ${lib.optionalString cfg.webServer.enable ''
-          if [ "''${webserver:-0}" = 1 ]; then
-            args+=(
-              -u "//setting[@id='services.webserver']" -v true
-              -u "//setting[@id='services.esallinterfaces']" -v true
-              -u "//setting[@id='services.webserverauthentication']" -v true
-              -u "//setting[@id='services.webserverusername']" -v "${cfg.webServer.username}"
-              -u "//setting[@id='services.webserverpassword']" -v "$password"
-              -u "//setting[@id='services.webserverport']" -v "${toString cfg.webServer.port}"
-              -u "//setting[@id='services.webserverssl']" -v false
-              -u "//setting[@id='services.zeroconf']" -v true
-              -d "//setting[@id='services.webserver']/@default"
-              -d "//setting[@id='services.esallinterfaces']/@default"
-              -d "//setting[@id='services.webserverpassword']/@default"
-            )
-          else
-            args+=(
-              -u "//setting[@id='services.webserver']" -v false
-              -d "//setting[@id='services.webserver']/@default"
-            )
-          fi
-        ''}
-        if [ "''${#args[@]}" -gt 0 ]; then
-          ${pkgs.xmlstarlet}/bin/xmlstarlet ed -L "''${args[@]}" "$settings"
-        fi
+                # `install -d` n'applique -o/-g qu'au dernier répertoire : sans la
+                # ligne sur `addon_data` seul, il est créé root:root et Kodi (uid
+                # kodi) ne peut plus écrire dans addon_data/<addon> — les greffons
+                # échouent en « Permission denied » au premier accès.
+                ${pkgs.coreutils}/bin/install -d -o ${cfg.user} -g users -m 0755 "${cfg.home}/.kodi/userdata/addon_data"
+                ${pkgs.coreutils}/bin/install -d -o ${cfg.user} -g users -m 0755 "${cfg.home}/.kodi/userdata/addon_data/skin.estuary"
+                if [ ! -e "$settings" ]; then
+                  ${pkgs.coreutils}/bin/printf '%s\n' \
+                    '<?xml version="1.0" encoding="UTF-8" standalone="yes" ?>' \
+                    '<settings version="2">' \
+                    '    <setting id="services.webserver" default="true">false</setting>' \
+                    '    <setting id="services.esallinterfaces" default="true">false</setting>' \
+                    '    <setting id="services.webserverauthentication" default="true">true</setting>' \
+                    '    <setting id="services.webserverusername" default="true">kodi</setting>' \
+                    '    <setting id="services.webserverpassword" default="true" />' \
+                    '    <setting id="filecache.memorysize" default="true">${toString cfg.video.cacheMiB}</setting>' \
+                    '    <setting id="services.webserverport" default="true">8080</setting>' \
+                    '    <setting id="services.webserverssl" default="true">false</setting>' \
+                    '    <setting id="services.zeroconf" default="true">true</setting>' \
+                    '    <setting id="audiooutput.guisoundmode" default="true">1</setting>' \
+                    '    <setting id="lookandfeel.soundskin" default="true">resource.uisounds.kodi</setting>' \
+                    '</settings>' > "$settings"
+                fi
 
-        # `<settinglevel>` vit sous `/settings/general`, pas à la racine : un XPath
-        # absolu sur `/settings/settinglevel` ne trouve rien, et xmlstarlet ne
-        # signale pas l'échec — le réglage restait à 2 en silence. On vise donc
-        # `//settinglevel`, et on crée la branche `general` si le fichier est neuf.
-        level=${toString levelNumber}
-        if [ "$(${pkgs.xmlstarlet}/bin/xmlstarlet sel -t -v "count(//settinglevel)" "$settings")" = "0" ]; then
-          ${pkgs.xmlstarlet}/bin/xmlstarlet ed -L \
-            -s /settings -t elem -n general \
-            -s "/settings/general" -t elem -n settinglevel -v "$level" "$settings"
-        else
-          ${pkgs.xmlstarlet}/bin/xmlstarlet ed -L -u "//settinglevel" -v "$level" "$settings"
-        fi
+                # Kodi marks default values with default="true" and ignores the text
+                # in that case; non-default values must drop the attribute.
+                #
+                # UI sounds: guisoundmode=0 disables them; soundskin must be empty,
+                # not "OFF" (Kodi logs "Unknown sounds addon 'OFF'").
+                args=(
+                  # Cache vidéo : toujours posé, c'est un réglage d'appliance.
+                  -u "//setting[@id='filecache.memorysize']" -v "${toString cfg.video.cacheMiB}"
+                  -d "//setting[@id='filecache.memorysize']/@default"
+                  ${lib.optionalString cfg.uiSounds ''
+                    -u "//setting[@id='audiooutput.guisoundmode']" -v 0
+                    -u "//setting[@id='lookandfeel.soundskin']" -v ""
+                    -d "//setting[@id='audiooutput.guisoundmode']/@default"
+                    -d "//setting[@id='lookandfeel.soundskin']/@default"
+                  ''}
+                )
+                ${lib.optionalString (cfg.audio.hdmiPcm != null) ''
+                  # Sink brut exposé par le kiosque : on le nomme explicitement, sinon
+                  # Kodi choisit « Default » et suit le sink par défaut de PipeWire.
+                  args+=(
+                    -u "//setting[@id='audiooutput.audiodevice']" -v "PIPEWIRE:alsa_output.hdmi"
+                    -d "//setting[@id='audiooutput.audiodevice']/@default"
+                  )
+                ''}
+                ${lib.optionalString cfg.webServer.enable ''
+                  if [ "''${webserver:-0}" = 1 ]; then
+                    args+=(
+                      -u "//setting[@id='services.webserver']" -v true
+                      -u "//setting[@id='services.esallinterfaces']" -v true
+                      -u "//setting[@id='services.webserverauthentication']" -v true
+                      -u "//setting[@id='services.webserverusername']" -v "${cfg.webServer.username}"
+                      -u "//setting[@id='services.webserverpassword']" -v "$password"
+                      -u "//setting[@id='services.webserverport']" -v "${toString cfg.webServer.port}"
+                      -u "//setting[@id='services.webserverssl']" -v false
+                      -u "//setting[@id='services.zeroconf']" -v true
+                      -d "//setting[@id='services.webserver']/@default"
+                      -d "//setting[@id='services.esallinterfaces']/@default"
+                      -d "//setting[@id='services.webserverpassword']/@default"
+                    )
+                  else
+                    args+=(
+                      -u "//setting[@id='services.webserver']" -v false
+                      -d "//setting[@id='services.webserver']/@default"
+                    )
+                  fi
+                ''}
+                if [ "''${#args[@]}" -gt 0 ]; then
+                  ${pkgs.xmlstarlet}/bin/xmlstarlet ed -L "''${args[@]}" "$settings"
+                fi
 
-        ${pkgs.coreutils}/bin/chown ${cfg.user}:users "$settings"
-        ${pkgs.coreutils}/bin/chmod 0600 "$settings"
+                # `<settinglevel>` vit sous `/settings/general`, pas à la racine : un XPath
+                # absolu sur `/settings/settinglevel` ne trouve rien, et xmlstarlet ne
+                # signale pas l'échec — le réglage restait à 2 en silence. On vise donc
+                # `//settinglevel`, et on crée la branche `general` si le fichier est neuf.
+                level=${toString levelNumber}
+                if [ "$(${pkgs.xmlstarlet}/bin/xmlstarlet sel -t -v "count(//settinglevel)" "$settings")" = "0" ]; then
+                  ${pkgs.xmlstarlet}/bin/xmlstarlet ed -L \
+                    -s /settings -t elem -n general \
+                    -s "/settings/general" -t elem -n settinglevel -v "$level" "$settings"
+                else
+                  ${pkgs.xmlstarlet}/bin/xmlstarlet ed -L -u "//settinglevel" -v "$level" "$settings"
+                fi
 
-        ${lib.optionalString (cfg.homeMenu.hidden != [ ]) ''
-          if [ ! -e "$skin_settings" ]; then
-            ${pkgs.coreutils}/bin/printf '%s\n' \
-              '<?xml version="1.0" encoding="UTF-8" standalone="yes" ?>' \
-              '<settings>' \
-              '</settings>' > "$skin_settings"
-          fi
-          ${lib.concatStrings (
-            map (item: ''
-              id="${homeMenuSettings.${item}}"
-              xpath="//setting[@id=\"''${id}\"]"
-              if [ "$(${pkgs.xmlstarlet}/bin/xmlstarlet sel -t -v "count(''${xpath})" "$skin_settings")" = "0" ]; then
-                ${pkgs.xmlstarlet}/bin/xmlstarlet ed -L \
-                  -s /settings -t elem -n setting -v true \
-                  -i "/settings/setting[last()]" -t attr -n id -v "$id" \
-                  -i "/settings/setting[last()]" -t attr -n type -v bool \
-                  "$skin_settings"
-              else
-                ${pkgs.xmlstarlet}/bin/xmlstarlet ed -L -u "''${xpath}" -v true "$skin_settings"
-              fi
-            '') cfg.homeMenu.hidden
-          )}
-          ${pkgs.coreutils}/bin/chown ${cfg.user}:users "$skin_settings"
-          ${pkgs.coreutils}/bin/chmod 0644 "$skin_settings"
-        ''}
+                ${pkgs.coreutils}/bin/chown ${cfg.user}:users "$settings"
+                ${pkgs.coreutils}/bin/chmod 0600 "$settings"
+
+                ${lib.optionalString (cfg.homeMenu.hidden != [ ]) ''
+                  if [ ! -e "$skin_settings" ]; then
+                    ${pkgs.coreutils}/bin/printf '%s\n' \
+                      '<?xml version="1.0" encoding="UTF-8" standalone="yes" ?>' \
+                      '<settings>' \
+                      '</settings>' > "$skin_settings"
+                  fi
+                  ${lib.concatStrings (
+                    map (item: ''
+                      id="${homeMenuSettings.${item}}"
+                      xpath="//setting[@id=\"''${id}\"]"
+                      if [ "$(${pkgs.xmlstarlet}/bin/xmlstarlet sel -t -v "count(''${xpath})" "$skin_settings")" = "0" ]; then
+                        ${pkgs.xmlstarlet}/bin/xmlstarlet ed -L \
+                          -s /settings -t elem -n setting -v true \
+                          -i "/settings/setting[last()]" -t attr -n id -v "$id" \
+                          -i "/settings/setting[last()]" -t attr -n type -v bool \
+                          "$skin_settings"
+                      else
+                        ${pkgs.xmlstarlet}/bin/xmlstarlet ed -L -u "''${xpath}" -v true "$skin_settings"
+                      fi
+                    '') cfg.homeMenu.hidden
+                  )}
+                  ${pkgs.coreutils}/bin/chown ${cfg.user}:users "$skin_settings"
+                  ${pkgs.coreutils}/bin/chmod 0644 "$skin_settings"
+                ''}
       '';
     };
 
