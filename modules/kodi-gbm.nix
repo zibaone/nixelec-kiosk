@@ -210,6 +210,27 @@ in
           Kodi déconseille explicitement sur SD et eMMC — le type l'interdit.
         '';
       };
+
+      primeDecoder = lib.mkOption {
+        type = lib.types.bool;
+        default = false;
+        description = ''
+          Active le décodeur DRM PRIME de Kodi (`videoplayer.useprimedecoder`).
+
+          Sur un SoC à VPU stateless, c'est **ce réglage** — et non la seule
+          présence du paquet Kodi patché — qui envoie le décodage au matériel :
+          `CDVDVideoCodecDRMPRIME::Create()` renvoie nullptr quand il est faux,
+          Kodi décode alors en CPU et ne le dit pas. Le paquet `kodi-kiosk` de
+          `nix-v4l2-request` compile le défaut à `true`, mais Kodi réécrit
+          `guisettings.xml` à l'arrêt : l'unité `kodi-settings` réapplique donc
+          la valeur avant chaque démarrage.
+
+          Désactivé par défaut, parce que le chemin matériel a un coût mesuré
+          sur la N5 (meson GXL) : +330 Mio de slab noyau en 45 min de lecture
+          continue, là où le décodage logiciel ne fuit pas (HavenOS, HANDOFF
+          §C1 bis). À activer par hôte, pas pour la flotte.
+        '';
+      };
     };
 
     webServer = {
@@ -449,6 +470,12 @@ in
         User = cfg.user;
         Group = "users";
         PAMName = "login";
+        # Les greffons vivent dans /nix/store (lecture seule) : Python ne peut
+        # pas écrire `__pycache__` à côté d'eux et recompile toute la chaîne
+        # d'imports à chaque invocation. Mesuré sur la N5 : 8–11 s par
+        # lancement de greffon, contre 2,2 s avec un cache chaud — assez pour
+        # geler l'interface à chaque changement de chaîne.
+        Environment = [ "PYTHONPYCACHEPREFIX=${cfg.home}/.cache/kodi-pycache" ];
         TTYPath = "/dev/tty1";
         TTYReset = "yes";
         TTYVHangup = "yes";
@@ -513,6 +540,10 @@ in
         # échouent en « Permission denied » au premier accès.
         ${pkgs.coreutils}/bin/install -d -o ${cfg.user} -g users -m 0755 "${cfg.home}/.kodi/userdata/addon_data"
         ${pkgs.coreutils}/bin/install -d -o ${cfg.user} -g users -m 0755 "${cfg.home}/.kodi/userdata/addon_data/skin.estuary"
+        # Cache de bytecode des greffons (PYTHONPYCACHEPREFIX de l'unité
+        # kodi-gbm) : Kodi doit pouvoir y écrire, sinon Python recompile à
+        # chaque invocation.
+        ${pkgs.coreutils}/bin/install -d -o ${cfg.user} -g users -m 0700 "${cfg.home}/.cache/kodi-pycache"
         # `-s` et non `-e` : un reboot ou une coupure pendant que Kodi
         # écrit guisettings.xml le laisse **vide** (0 octet). xmlstarlet
         # refuse alors le fichier (« Document is empty »), l'unité tombe,
@@ -532,6 +563,7 @@ in
             '    <setting id="services.webserverusername" default="true">kodi</setting>' \
             '    <setting id="services.webserverpassword" default="true" />' \
             '    <setting id="filecache.memorysize" default="true">${toString cfg.video.cacheMiB}</setting>' \
+            '    <setting id="videoplayer.useprimedecoder">${if cfg.video.primeDecoder then "true" else "false"}</setting>' \
             '    <setting id="services.webserverport" default="true">8080</setting>' \
             '    <setting id="services.webserverssl" default="true">false</setting>' \
             '    <setting id="services.zeroconf" default="true">true</setting>' \
@@ -549,6 +581,12 @@ in
           # Cache vidéo : toujours posé, c'est un réglage d'appliance.
           -u "//setting[@id='filecache.memorysize']" -v "${toString cfg.video.cacheMiB}"
           -d "//setting[@id='filecache.memorysize']/@default"
+          # Décodage matériel : le défaut compilé du paquet `kodi-kiosk` est
+          # `true`, et Kodi réécrit `guisettings.xml` à l'arrêt. On écrit donc
+          # toujours la valeur explicite, et **jamais** `default="true"` —
+          # Kodi ignorerait le texte et reprendrait le défaut.
+          -u "//setting[@id='videoplayer.useprimedecoder']" -v ${if cfg.video.primeDecoder then "true" else "false"}
+          -d "//setting[@id='videoplayer.useprimedecoder']/@default"
           ${lib.optionalString cfg.uiSounds ''
             -u "//setting[@id='audiooutput.guisoundmode']" -v 0
             -u "//setting[@id='lookandfeel.soundskin']" -v ""
