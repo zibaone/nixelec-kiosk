@@ -87,6 +87,67 @@ let
       seconds = secondsOf value;
     in
     platform.watchdog.maxTimeout != null && seconds != null && seconds > platform.watchdog.maxTimeout;
+
+  # `nixelec.kiosk.settings` → une affectation shell par réglage. Booléens
+  # rendus `true`/`false` (ce que Kodi écrit), le reste tel quel.
+  settingValue =
+    value:
+    if builtins.isBool value then
+      (if value then "true" else "false")
+    else
+      toString value;
+
+  settingsAssignments = lib.concatStrings (
+    lib.mapAttrsToList (
+      id: value: "        setSetting ${lib.escapeShellArg id} ${lib.escapeShellArg (settingValue value)}\n"
+    ) cfg.settings
+  );
+
+  # Réglages d'addons : littéraux (`addonSettings`) et valeurs lues à
+  # l'exécution depuis un fichier (`addonSecrets`, typiquement un secret
+  # provisionné dans /run/havenos). Un secret absent n'empêche pas Kodi de
+  # démarrer : le réglage n'est pas écrit et l'unité le dit.
+  addonNames = lib.unique (
+    builtins.attrNames cfg.addonSettings ++ builtins.attrNames cfg.addonSecrets
+  );
+
+  addonSettingsScript = lib.concatMapStrings (
+    addon:
+    let
+      literals = cfg.addonSettings.${addon} or { };
+      secrets = cfg.addonSecrets.${addon} or { };
+      literalLines = lib.concatStrings (
+        lib.mapAttrsToList (
+          id: value:
+          "        setSettingIn \"$addon_file\" ${lib.escapeShellArg id} ${lib.escapeShellArg (settingValue value)}\n"
+        ) literals
+      );
+      secretLines = lib.concatStrings (
+        lib.mapAttrsToList (
+          id: path:
+          "        if [ -r ${lib.escapeShellArg path} ]; then\n"
+          + "          setSettingIn \"$addon_file\" ${lib.escapeShellArg id} \"$(${pkgs.coreutils}/bin/cat ${lib.escapeShellArg path})\"\n"
+          + "        else\n"
+          + "          echo \"kodi-settings: ${path} absent — ${addon} / ${id} non écrit\" >&2\n"
+          + "        fi\n"
+        ) secrets
+      );
+    in
+    ''
+              # ${addon}
+              addon_file="${cfg.home}/.kodi/userdata/addon_data/${addon}/settings.xml"
+              ${pkgs.coreutils}/bin/install -d -o ${cfg.user} -g users -m 0755 "$(${pkgs.coreutils}/bin/dirname "$addon_file")"
+              if [ ! -s "$addon_file" ]; then
+                ${pkgs.coreutils}/bin/printf '%s\n' \
+                  '<?xml version="1.0" encoding="UTF-8" standalone="yes" ?>' \
+                  '<settings version="2">' \
+                  '</settings>' > "$addon_file"
+                ${pkgs.coreutils}/bin/chown ${cfg.user}:users "$addon_file"
+                ${pkgs.coreutils}/bin/chmod 0644 "$addon_file"
+              fi
+      ${literalLines}${secretLines}
+    ''
+  ) addonNames;
 in
 {
   imports = [ ./platform.nix ];
@@ -193,6 +254,87 @@ in
         et masque alors la moitié des réglages utiles (cache vidéo, accélération
         matérielle, débogage) : sur un kiosque, personne n'ouvrira l'interface
         pour les débloquer, donc le niveau se pose en configuration.
+      '';
+    };
+
+    settings = lib.mkOption {
+      type = lib.types.attrsOf (
+        lib.types.oneOf [
+          lib.types.bool
+          lib.types.int
+          lib.types.str
+        ]
+      );
+      default = { };
+      example = lib.literalExpression ''
+        {
+          "audiooutput.volumesteps" = 20;
+          "lookandfeel.font" = "Arial";
+          "locale.use24hourclock" = "24hours";
+        }
+      '';
+      description = ''
+        Réglages de `guisettings.xml`, par identifiant Kodi
+        (`<setting id="…">valeur</setting>`), reposés avant chaque démarrage.
+
+        Kodi réécrit `guisettings.xml` à l'arrêt : une valeur posée une fois à
+        la main est perdue au redémarrage suivant, d'où cette unité. Un
+        `<setting>` absent du fichier est créé (fichier neuf ou écrit par une
+        version plus ancienne) ; `default="true"` est retiré, sinon Kodi
+        ignorerait le texte et reprendrait la valeur compilée.
+
+        Les valeurs sont celles du fichier, pas celles de l'interface : pour
+        `lookandfeel.font`, c'est l'`id` du `fontset` du skin (`Arial`, pas
+        « Arial based ») ; pour `locale.use24hourclock`, `24hours` ; pour
+        `locale.temperatureunit`, `c`. Un identifiant que Kodi ne connaît pas
+        est écrit sans effet — rien ne le valide ici.
+      '';
+    };
+
+    addonSettings = lib.mkOption {
+      type = lib.types.attrsOf (lib.types.attrsOf (lib.types.oneOf [ lib.types.bool lib.types.int lib.types.str ]));
+      default = { };
+      example = lib.literalExpression ''
+        {
+          "plugin.video.xtream" = {
+            "xtream.ip" = "tv.example.net";
+            "xtream.username" = "meh";
+          };
+        }
+      '';
+      description = ''
+        Réglages d'addons écrits dans `userdata/addon_data/<addon>/settings.xml`
+        avant chaque démarrage, par couple addon → (id Kodi → valeur).
+
+        Même format que `guisettings.xml` (`<setting id="…">valeur</setting>`,
+        `version="2"` sous Kodi 21) et même contrainte : Kodi réécrit le
+        fichier, donc une valeur posée à la main ne survit pas. Le fichier et
+        son répertoire sont créés s'ils manquent, `default="true"` est retiré.
+
+        Les ids sont ceux du `resources/settings.xml` de l'addon (par exemple
+        `xtream.ip`, `xtream.username`, `xtream.password` pour
+        `plugin.video.xtream`). Poser un réglage ici en fait la source de
+        vérité : une modification faite dans l'interface Kodi est écrasée au
+        démarrage suivant.
+      '';
+    };
+
+    addonSecrets = lib.mkOption {
+      type = lib.types.attrsOf (lib.types.attrsOf lib.types.str);
+      default = { };
+      example = lib.literalExpression ''
+        { "plugin.video.xtream" = { "xtream.password" = "/run/havenos/xtream-password"; }; }
+      '';
+      description = ''
+        Comme `addonSettings`, mais la valeur est lue à l'exécution dans un
+        fichier (chemin absolu), typiquement un secret déchiffré dans
+        `/run/havenos` par le provisioning.
+
+        Un fichier illisible n'est **pas** fatal : le réglage n'est pas écrit,
+        l'unité le signale sur la sortie d'erreur et Kodi démarre — même
+        dégradation assumée que pour le mot de passe du serveur web. Le
+        fichier est lu à chaque démarrage, donc une rotation de secret suit
+        sans reconstruire l'image.
       '';
     };
 
@@ -628,6 +770,39 @@ in
           ${pkgs.xmlstarlet}/bin/xmlstarlet ed -L "''${args[@]}" "$settings"
         fi
 
+        # Réglages déclaratifs : id → valeur, repris de `nixelec.kiosk.settings`
+        # (guisettings.xml) puis `addonSettings`/`addonSecrets`
+        # (addon_data/<addon>/settings.xml). Même format dans les deux cas
+        # (`<setting id="…">valeur</setting>`, `version="2"`) et même piège :
+        # `xmlstarlet -u` sur un nœud absent ne fait rien et ne le signale pas,
+        # donc le `<setting>` est créé à la main. `default="true"` est retiré,
+        # sinon Kodi ignore le texte et reprend sa valeur compilée.
+        setSettingIn() {
+          file=$1
+          id=$2
+          value=$3
+          # XPath avec la valeur entre guillemets : un id nu serait lu comme un
+          # nom d'élément et xmlstarlet ne trouverait rien.
+          path="//setting[@id=\"$id\"]"
+          if [ "$(${pkgs.xmlstarlet}/bin/xmlstarlet sel -t -v "count($path)" "$file")" = "0" ]; then
+            # Création **sans** valeur : `--subnode … -v` perd les `&` du texte
+            # (« p&ss » ressort « pss »), alors que `--update -v` les échappe
+            # correctement. L'élément est donc créé vide, puis écrit par le
+            # chemin commun — sinon un mot de passe contenant `&` serait
+            # silencieusement faux.
+            ${pkgs.xmlstarlet}/bin/xmlstarlet ed -L \
+              -s /settings -t elem -n setting \
+              -i "/settings/setting[last()]" -t attr -n id -v "$id" "$file"
+          fi
+          ${pkgs.xmlstarlet}/bin/xmlstarlet ed -L \
+            -u "$path" -v "$value" \
+            -d "$path/@default" "$file"
+        }
+
+        setSetting() { setSettingIn "$settings" "$@"; }
+
+${settingsAssignments}
+
         # `<settinglevel>` vit sous `/settings/general`, pas à la racine : un XPath
         # absolu sur `/settings/settinglevel` ne trouve rien, et xmlstarlet ne
         # signale pas l'échec — le réglage restait à 2 en silence. On vise donc
@@ -669,6 +844,8 @@ in
           ${pkgs.coreutils}/bin/chown ${cfg.user}:users "$skin_settings"
           ${pkgs.coreutils}/bin/chmod 0644 "$skin_settings"
         ''}
+
+${addonSettingsScript}
       '';
     };
 
