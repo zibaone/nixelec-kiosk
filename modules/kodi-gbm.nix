@@ -103,35 +103,39 @@ let
     ) cfg.settings
   );
 
-  # Réglages d'addons : littéraux (`addonSettings`) et valeurs lues à
-  # l'exécution depuis un fichier (`addonSecrets`, typiquement un secret
-  # provisionné dans /run/havenos). Un secret absent n'empêche pas Kodi de
-  # démarrer : le réglage n'est pas écrit et l'unité le dit.
+  # Réglages d'addons : littéraux (`addonSettings`) et bloc lu à l'exécution
+  # dans un fichier `id=valeur` (`addonSettingsFile`, typiquement un secret
+  # provisionné). Un fichier absent n'empêche pas Kodi de démarrer : ses
+  # réglages ne sont pas écrits et l'unité le dit.
   addonNames = lib.unique (
-    builtins.attrNames cfg.addonSettings ++ builtins.attrNames cfg.addonSecrets
+    builtins.attrNames cfg.addonSettings ++ builtins.attrNames cfg.addonSettingsFile
   );
 
   addonSettingsScript = lib.concatMapStrings (
     addon:
     let
       literals = cfg.addonSettings.${addon} or { };
-      secrets = cfg.addonSecrets.${addon} or { };
+      settingsFile = cfg.addonSettingsFile.${addon} or null;
       literalLines = lib.concatStrings (
         lib.mapAttrsToList (
           id: value:
           "        setSettingIn \"$addon_file\" ${lib.escapeShellArg id} ${lib.escapeShellArg (settingValue value)}\n"
         ) literals
       );
-      secretLines = lib.concatStrings (
-        lib.mapAttrsToList (
-          id: path:
-          "        if [ -r ${lib.escapeShellArg path} ]; then\n"
-          + "          setSettingIn \"$addon_file\" ${lib.escapeShellArg id} \"$(${pkgs.coreutils}/bin/cat ${lib.escapeShellArg path})\"\n"
+      fileLines =
+        if settingsFile == null then
+          ""
+        else
+          "        if [ -r ${lib.escapeShellArg settingsFile} ]; then\n"
+          + "          while IFS= read -r line || [ -n \"$line\" ]; do\n"
+          + "            case $line in\n"
+          + "              \"\" | \"#\"*) continue ;;\n"
+          + "            esac\n"
+          + "            setSettingIn \"$addon_file\" \"\${line%%=*}\" \"\${line#*=}\"\n"
+          + "          done < ${lib.escapeShellArg settingsFile}\n"
           + "        else\n"
-          + "          echo \"kodi-settings: ${path} absent — ${addon} / ${id} non écrit\" >&2\n"
-          + "        fi\n"
-        ) secrets
-      );
+          + "          echo \"kodi-settings: ${settingsFile} absent — réglages de ${addon} non écrits\" >&2\n"
+          + "        fi\n";
     in
     ''
               # ${addon}
@@ -145,7 +149,7 @@ let
                 ${pkgs.coreutils}/bin/chown ${cfg.user}:users "$addon_file"
                 ${pkgs.coreutils}/bin/chmod 0644 "$addon_file"
               fi
-      ${literalLines}${secretLines}
+      ${literalLines}${fileLines}
     ''
   ) addonNames;
 in
@@ -319,22 +323,25 @@ in
       '';
     };
 
-    addonSecrets = lib.mkOption {
-      type = lib.types.attrsOf (lib.types.attrsOf lib.types.str);
+    addonSettingsFile = lib.mkOption {
+      type = lib.types.attrsOf lib.types.str;
       default = { };
       example = lib.literalExpression ''
-        { "plugin.video.xtream" = { "xtream.password" = "/run/havenos/xtream-password"; }; }
+        { "plugin.video.xtream" = "/run/havenos/xtream-credentials"; }
       '';
       description = ''
-        Comme `addonSettings`, mais la valeur est lue à l'exécution dans un
-        fichier (chemin absolu), typiquement un secret déchiffré dans
-        `/run/havenos` par le provisioning.
+        Réglages d'addons lus à l'exécution dans un fichier, au format
+        `id=valeur` : une ligne par réglage, coupure au **premier** `=`
+        (une valeur peut donc en contenir), lignes vides et lignes commençant
+        par `#` ignorées.
 
-        Un fichier illisible n'est **pas** fatal : le réglage n'est pas écrit,
-        l'unité le signale sur la sortie d'erreur et Kodi démarre — même
-        dégradation assumée que pour le mot de passe du serveur web. Le
-        fichier est lu à chaque démarrage, donc une rotation de secret suit
-        sans reconstruire l'image.
+        Typiquement un secret provisionné, déchiffré dans `/run/havenos` avant
+        le démarrage : mettre les quatre valeurs dans le même fichier évite
+        d'éparpiller un identifiant en clair dans la configuration.
+
+        Un fichier illisible n'est **pas** fatal : les réglages de ce fichier
+        ne sont pas écrits, l'unité le signale, Kodi démarre. Ces réglages sont
+        posés après `addonSettings`, qu'ils écrasent en cas de doublon.
       '';
     };
 
