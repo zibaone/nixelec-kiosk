@@ -64,6 +64,8 @@ carte vaut `0` sur toutes les cibles actuelles (un seul GPU).
 | `user`, `home`, `extraGroups` | utilisateur du kiosque, XDG, groupes DRM/audio/input |
 | `addons`, `autoEnableAddons` | `withPackages` et activation JSON-RPC au boot |
 | `webServer.*`, `uiSounds`, `homeMenu.hidden` | réglages appliqués avant chaque départ de Kodi |
+| `settings` | `guisettings.xml`, id Kodi → valeur ; écrit à chaque démarrage (Kodi réécrit le fichier à l'arrêt) |
+| `addonSettings`, `addonSecrets` | `addon_data/<addon>/settings.xml` ; `addonSecrets` lit la valeur dans un fichier runtime (secret provisionné), absent = réglage non écrit |
 | `cpuGovernor` | écrit directement dans sysfs (`null` = défaut noyau) |
 | `watchdog.*` | `systemd.settings.Manager`, plafonné par `platform.watchdog.maxTimeout` |
 | `cec.driver` / `cec.connector` | `nullOr str`, renseignés par le câblage |
