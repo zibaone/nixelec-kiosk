@@ -61,6 +61,7 @@ carte vaut `0` sur toutes les cibles actuelles (un seul GPU).
 |---|---|
 | `enable` | active le service et le reste du bloc |
 | `package` | **obligatoire, sans défaut** — voir §Le paquet |
+| `windowing` | `"gbm"` (défaut) ou `"wayland"` — doit correspondre au paquet ; c'est `--windowing=` |
 | `user`, `home`, `extraGroups` | utilisateur du kiosque, XDG, groupes DRM/audio/input |
 | `addons`, `autoEnableAddons` | `withPackages` et activation JSON-RPC au boot |
 | `webServer.*`, `uiSounds`, `homeMenu.hidden` | réglages appliqués avant chaque départ de Kodi |

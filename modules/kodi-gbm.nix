@@ -71,6 +71,18 @@ let
   # paths and the published cache stay valid.
   kodiPackage = if cfg.addons == null then cfg.package else cfg.package.withPackages cfg.addons;
 
+  # Which windowing a Kodi package can serve is not published: `kodi`,
+  # `kodi-gbm` and `kodi-wayland` all carry `name = "kodi-<version>"`, and the
+  # selected platform list only lives in the derivation's `preConfigure`
+  # (`-DCORE_PLATFORM_NAME=…`), not in an attribute. What is readable at eval
+  # time is the dependency set: a build made with `waylandSupport = true`
+  # pulls `wayland` into `buildInputs`, a GBM build does not. A package that
+  # exposes no `buildInputs` at all (buildEnv wrapper, prebuilt tarball)
+  # proves nothing either way and is left unchecked — the same choice as
+  # `secondsOf` below, rather than a guess in either direction.
+  lacksWayland =
+    pkg: pkg ? buildInputs && !(lib.any (dep: lib.getName dep == "wayland") pkg.buildInputs);
+
   # systemd accepts any time span ("15s", "1min", "500ms"). Only the plain
   # seconds form can be checked against the hardware cap published by the
   # platform; anything else is left unchecked rather than mis-parsed.
@@ -171,6 +183,25 @@ in
         Supply the `nix-v4l2-request` build on a stateless-VPU SoC
         (`packages.<system>.kodi-kiosk`) and `pkgs.kodi-gbm` on x86 (VA-API).
         A card can publish its own choice as `nixelec.platform.kodiPackage`.
+      '';
+    };
+
+    windowing = lib.mkOption {
+      type = lib.types.enum [
+        "gbm"
+        "wayland"
+      ];
+      default = "gbm";
+      description = ''
+        Windowing backend handed to Kodi as `--windowing=`. It must match the
+        selected `package`: `--windowing` picks a platform compiled into the
+        binary, so a GBM build asked for `wayland` fails at startup, and a
+        Wayland build asked for `gbm` does the same.
+
+        The default stays `gbm` — direct DRM, no compositor — because that is
+        what the fleet runs. `wayland` is for the case where a compositor is
+        put back in front of Kodi, with a package built for it (`kodi-wayland`
+        in nixpkgs, `kodi-kiosk-wayland` in `nix-v4l2-request`).
       '';
     };
 
@@ -563,6 +594,18 @@ in
           wrong.
         '';
       }
+      {
+        assertion = cfg.windowing != "wayland" || !lacksWayland cfg.package;
+        message = ''
+          nixelec.kiosk.windowing = "wayland" but the selected Kodi package has
+          no Wayland platform: its buildInputs do not pull `wayland`, so it was
+          built for GBM and `--windowing=wayland` will fail at startup.
+
+          Pick a package built with waylandSupport = true (`pkgs.kodi-wayland`,
+          or `kodi-kiosk-wayland` from nix-v4l2-request), or leave
+          nixelec.kiosk.windowing at its default "gbm".
+        '';
+      }
     ];
 
     # Hardware watchdog: PID 1 pings it, so a hard hang restarts the appliance
@@ -635,7 +678,7 @@ in
         # ~40 s before Kodi takes DRM master.
         StandardOutput = "journal";
         StandardError = "journal";
-        ExecStart = "${kodiPackage}/bin/kodi --standalone --windowing=gbm";
+        ExecStart = "${kodiPackage}/bin/kodi --standalone --windowing=${cfg.windowing}";
         Restart = "always";
         # SIGTERM (128+15) is how hdmi-cec-hotplug stops Kodi on purpose.
         # Without this, systemd logs "Failed with result 'exit-code'" on
