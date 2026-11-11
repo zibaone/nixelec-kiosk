@@ -979,6 +979,19 @@ ${addonSettingsScript}
     # RT, so PipeWire's data-loop becomes SCHED_RR/20.
     boot.kernel.sysctl."kernel.sched_rt_runtime_us" = -1;
     systemd.services.rtkit-daemon.serviceConfig.LimitRTPRIO = 95;
+
+    # Ce `serviceConfig` fait générer un drop-in « asDropin » dans
+    # /etc/systemd/system/rtkit-daemon.service.d/overrides.conf, en **lien** vers
+    # le fichier d'unité du store. Le générateur d'etc ne dépend pas de ce
+    # fichier (`nix-store -q --references <etc>` ne le contient pas) : un
+    # `nix-collect-garbage` supprime la cible, le lien devient mort, et
+    # `systemctl daemon-reload` — que lance `switch-to-configuration` — échoue
+    # sur « Failed to open unit file …/overrides.conf: No such file or
+    # directory ». Mesuré sur la Zero 3 le 2026-11-11 : plus aucune bascule de
+    # génération possible, il fallait passer par `switch-to-configuration boot`
+    # puis redémarrer. Forcer la dépendance met l'unité dans le closure du
+    # système : le lien survit au GC et la bascule refonctionne.
+    system.extraDependencies = [ config.systemd.units."rtkit-daemon.service".unit ];
     services.pipewire = {
       enable = true;
       alsa.enable = true;
