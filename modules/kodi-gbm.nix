@@ -1236,6 +1236,25 @@ ${addonSettingsScript}
             echo "CEC recovery already attempted recently, skip"
             exit 0
           fi
+          # The kernel re-probes the EDID after an HPD burst, and the physical
+          # address sometimes comes back on its own a few seconds later. A
+          # restart costs the viewer the programme in progress, so give the
+          # kernel up to 15 s before paying that price: the restart stays
+          # necessary most of the time, but it must not fire while the address
+          # is on its way back.
+          tries=0
+          while [ "$tries" -lt 15 ]; do
+            tries=$((tries + 1))
+            ${pkgs.coreutils}/bin/sleep 1
+            phys=$(cec_ctl \
+              | ${pkgs.gnugrep}/bin/grep -m1 "Physical Address" \
+              | ${pkgs.gnused}/bin/sed "s/.*: *//")
+            if [ "$phys" != "f.f.f.f" ] && cec_has_la && cec_owned_by_libcec; then
+              echo "CEC physical address back on its own after $tries s ($phys), Kodi left running"
+              ${pkgs.coreutils}/bin/rm -f "$stamp"
+              exit 0
+            fi
+          done
           ${pkgs.coreutils}/bin/touch "$stamp"
           echo "CEC physical address invalid after hotplug, restarting Kodi"
           ${config.systemd.package}/bin/systemctl --no-block restart kodi-gbm.service
@@ -1258,11 +1277,20 @@ ${addonSettingsScript}
         # CEC_STAT_ERROR_INIT, so restarting Kodi is not enough. Reloading the
         # module re-initialises the block and lets Kodi claim the address again.
         #
-        # KNOWN HAZARD: this unloads the module while Kodi still holds the CEC
-        # device, which is a use-after-free in cec_devnode_release and costs a
-        # power cycle. Reordering it (stop the kiosk, wait for kodi.bin to
-        # exit, reload, start) has to be replayed on the board first.
+        # KNOWN HAZARD: unloading the module while Kodi still holds the CEC
+        # device is a use-after-free in cec_devnode_release and costs a power
+        # cycle. Stop the kiosk first and wait for kodi.bin to leave — the
+        # module must not disappear under a live file descriptor.
         echo "Reloading ${cfg.cec.driver} to re-initialise the CEC controller"
+        ${config.systemd.package}/bin/systemctl stop kodi-gbm.service || true
+        tries=0
+        while [ "$tries" -lt 40 ] && ${pkgs.procps}/bin/pgrep -x kodi.bin >/dev/null 2>&1; do
+          tries=$((tries + 1))
+          ${pkgs.coreutils}/bin/sleep 0.25
+        done
+        if ${pkgs.procps}/bin/pgrep -x kodi.bin >/dev/null 2>&1; then
+          echo "kodi.bin still running after 10 s, reloading ${cfg.cec.driver} anyway" >&2
+        fi
         ${pkgs.kmod}/bin/modprobe -r ${cfg.cec.driver} 2>/dev/null || true
         ${pkgs.kmod}/bin/modprobe ${cfg.cec.driver} 2>/dev/null || true
         for _ in $(${pkgs.coreutils}/bin/seq 1 50); do
