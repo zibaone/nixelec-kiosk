@@ -679,6 +679,22 @@ in
         StandardOutput = "journal";
         StandardError = "journal";
         ExecStart = "${kodiPackage}/bin/kodi --standalone --windowing=${cfg.windowing}";
+        # A restart hands the HDMI PCM from the previous PipeWire instance to
+        # the new one, and the sunxi codec refuses a second simultaneous
+        # stream: the newcomer got EBUSY and Kodi started without audio
+        # ("Only one simultaneous stream supported!", then
+        # "pipewire: 'hw:1': playback open failed: Device or resource busy").
+        # Wait (bounded) for the playback devices to be released before Kodi
+        # takes over. Nothing holds them at boot, so this costs nothing there.
+        ExecStartPre = "${pkgs.writeShellScript "wait-hdmi-pcm" ''
+          for _ in ${pkgs.coreutils}/bin/seq 1 40; do
+            if ! ${pkgs.psmisc}/bin/fuser /dev/snd/pcmC*D*p >/dev/null 2>&1; then
+              exit 0
+            fi
+            ${pkgs.coreutils}/bin/sleep 0.25
+          done
+          echo "playback devices still busy after 10 s, starting Kodi anyway" >&2
+        ''}";
         Restart = "always";
         # SIGTERM (128+15) is how hdmi-cec-hotplug stops Kodi on purpose.
         # Without this, systemd logs "Failed with result 'exit-code'" on
