@@ -1065,25 +1065,6 @@ in
       '')
     ];
 
-    # Expérience 2026-11-12 : le warning `ccu_helper_wait_for_lock` (sunxi-ng,
-    # `ccu_common.c:38`) se déclenche à chaque démarrage, ~20 s après que
-    # PipeWire a ouvert le PCM HDMI, et de nouveau à chaque hotplug. La PLL
-    # audio HDMI n'obtient pas son verrouillage dans le délai du driver.
-    #
-    # Hypothèse testée ici : c'est la *reconfiguration* de fréquence qui la met
-    # en défaut, pas la première programmation. En n'autorisant que 48 kHz dans
-    # le graphe, aucun changement de fréquence n'est plus demandé à l'ALSA — le
-    # sink HDMI est déjà créé en 48000 (voir 50-hdmi-pcm.conf) et Kodi
-    # resample lui-même ce qui n'est pas en 48 kHz.
-    #
-    # Si le warning disparaît au démarrage : hypothèse confirmée, on garde.
-    # S'il persiste : c'est la programmation initiale, il n'y a rien à régler
-    # ici — le rapport amont (HavenOS docs/diagnostics) reste la seule voie.
-    services.pipewire.extraConfig.pipewire."99-fixed-clock-rate" = {
-      "default.clock.rate" = 48000;
-      "default.clock.allowed-rates" = [ 48000 ];
-    };
-
     services.pipewire.wireplumber.extraConfig."52-hdmi-default" = lib.mkIf (cfg.audio.hdmiPcm != null) {
       "wireplumber.settings"."default.configured.audio.sink" = {
         name = "alsa_output.hdmi";
