@@ -109,6 +109,15 @@ en `mkForce` — un `mkForce` jette les paramètres du consommateur.
   `kodi.bin` avant `modprobe -r` : décharger le module sous un descripteur
   ouvert est un use-after-free dans `cec_devnode_release`.
 
+**Depuis le noyau 7.0.14 + `cec-restore-phys-addr-hpd.patch` (2026-11-12), cet
+escalier est une sécurité, plus le chemin normal.** Le driver `dw-hdmi`
+repousse lui-même l'adresse physique du dernier EDID au rebranchement ; mesuré
+sur la Zero 3 : `f.f.f.f` → `3.0.0.0` en 1 à 2 s, `libCEC` récupère son adresse
+logique (`mask 0x0002`) et l'unité sort sur « logical address present, nothing
+to recover » — Kodi n'a pas été redémarré une seule fois sur six rebranchements
+consécutifs. L'escalier reste utile si le patch disparaît (montée de noyau) :
+il ne coûte qu'un sondage qui sort en quelques secondes.
+
 Les assertions refusent `reprobeOnBoot` sans `driver`, et `hotplugRecovery`
 sans `driver` ni `connector`.
 
