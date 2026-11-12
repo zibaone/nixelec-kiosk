@@ -102,8 +102,12 @@ en `mkForce` — un `mkForce` jette les paramètres du consommateur.
   module noyau n'est chargé ;
 - `+ driver` : le module est chargé, mis dans l'allowlist d'un arbre élagué,
   et rechargé au boot (`reprobeOnBoot`) si l'adresse physique est `f.f.f.f` ;
-- `+ driver + connector` : reprise après hotplug (udev → redémarrage de Kodi,
-  vérifié sur l'adresse logique **et** son propriétaire libCEC).
+- `+ driver + connector` : reprise après hotplug (udev → sondage de l'adresse
+  physique jusqu'à 15 s, puis redémarrage de Kodi seulement si elle ne revient
+  pas, vérifié sur l'adresse logique **et** son propriétaire libCEC). Le
+  dernier barreau — rechargement du module — arrête Kodi et attend la sortie de
+  `kodi.bin` avant `modprobe -r` : décharger le module sous un descripteur
+  ouvert est un use-after-free dans `cec_devnode_release`.
 
 Les assertions refusent `reprobeOnBoot` sans `driver`, et `hotplugRecovery`
 sans `driver` ni `connector`.
