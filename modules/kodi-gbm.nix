@@ -1384,7 +1384,10 @@ in
       timeout = 60;
     };
     systemd.network.networks."10-lan" = {
-      matchConfig.Name = "en*";
+      # `en*` couvre les noms prédictibles (end0, enP4p65s0…). Les cartes
+      # sunxi/meson pilotées par un MAC hors arbre (sunxi-gmac, vendor meson)
+      # gardent un `eth0` classique : sans `eth*`, aucun bail DHCP n'est tenté.
+      matchConfig.Name = "en* eth*";
       networkConfig.DHCP = "ipv4";
       # Le filaire passe devant le WiFi quand les deux sont présents : sans
       # métrique distincte, les deux liens obtiennent 1024 et la carte se
