@@ -271,6 +271,26 @@ in
           PCM as a PipeWire sink named `alsa_output.hdmi` and points Kodi at it.
         '';
       };
+
+      analogDevice = lib.mkOption {
+        type = lib.types.nullOr lib.types.str;
+        default = null;
+        example = "default";
+        description = ''
+          ALSA device of the analog jack (headphone / AV out), used **only when
+          {option}`audio.hdmiPcm` is null` — HDMI wins otherwise.
+
+          Kodi is then pointed at `ALSA:<device>` directly, without PipeWire:
+          on the H616/H618 boxes the HDMI sound card does not exist yet, so the
+          `PIPEWIRE:alsa_output.hdmi` sink the kiosk would otherwise select
+          points at nothing and *every* output stays silent, including the
+          analog one. `"default"` follows the first ALSA card, which is the
+          SoC codec (`sun4i-codec` on sunxi).
+
+          Leave null on a board without an analog output: Kodi then keeps its
+          own default device.
+        '';
+      };
     };
 
     settingsLevel = lib.mkOption {
@@ -816,6 +836,16 @@ in
                   # Kodi choisit « Default » et suit le sink par défaut de PipeWire.
                   args+=(
                     -u "//setting[@id='audiooutput.audiodevice']" -v "PIPEWIRE:alsa_output.hdmi"
+                    -d "//setting[@id='audiooutput.audiodevice']/@default"
+                  )
+                ''}
+                ${lib.optionalString (cfg.audio.hdmiPcm == null && cfg.audio.analogDevice != null) ''
+                  # Pas de carte son HDMI sur cette carte : on sort en ALSA direct
+                  # sur le codec analogique. Laisser le `PIPEWIRE:alsa_output.hdmi`
+                  # hérité d'une génération précédente rendrait *toutes* les
+                  # sorties muettes (le sink n'existe pas).
+                  args+=(
+                    -u "//setting[@id='audiooutput.audiodevice']" -v "ALSA:${cfg.audio.analogDevice}"
                     -d "//setting[@id='audiooutput.audiodevice']/@default"
                   )
                 ''}
